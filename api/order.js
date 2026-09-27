@@ -18,12 +18,14 @@ import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, json 
 export const config = { api: { bodyParser: false } };
 
 async function rawBody(req) {
+  // Lire le flux AVANT tout accès à req.body : sur Vercel, ce getter décode
+  // le JSON à la volée et les octets exacts (ceux que Shopify a signés) sont perdus.
+  const chunks = [];
+  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  if (chunks.length) return Buffer.concat(chunks).toString('utf8');
   if (typeof req.body === 'string') return req.body;
   if (Buffer.isBuffer(req.body)) return req.body.toString('utf8');
-  if (req.body && typeof req.body === 'object') throw new HttpError(500, 'Corps déjà décodé : impossible de vérifier la signature (bodyParser).');
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
+  throw new HttpError(500, 'Corps brut indisponible : impossible de vérifier la signature.');
 }
 
 function verifyWebhook(req, raw) {
