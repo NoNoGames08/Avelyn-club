@@ -294,3 +294,42 @@ export async function createDiscount(customerId, reward, code) {
   );
   return userErrors(data.discountCodeBasicCreate, 'Création de la réduction');
 }
+
+/** Code « pièce offerte » de la carte à tampons : plafonné, une seule pièce, réservé à la cliente. */
+export async function createStampGift(customerId, code) {
+  const { giftCollectionId, giftAmount, giftLabel } = CLUB.stamps;
+  const data = await admin(
+    `mutation($d: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $d) { codeDiscountNode { id } userErrors { field message } } }`,
+    { d: {
+      title: `${giftLabel} (${code})`,
+      code,
+      startsAt: new Date().toISOString(),
+      usageLimit: 1,
+      appliesOncePerCustomer: true,
+      context: { customers: { add: [customerId] } },
+      customerGets: { value: { discountAmount: { amount: giftAmount, appliesOnEachItem: false } }, items: { collections: { add: [giftCollectionId] } } },
+      combinesWith: { productDiscounts: false, orderDiscounts: false, shippingDiscounts: true }
+    } }
+  );
+  return userErrors(data.discountCodeBasicCreate, 'Code pièce offerte');
+}
+
+/**
+ * Jeton de session d'une extension (espace client OU page de remerciement).
+ * Contrairement à customerFromToken, la cliente peut être absente (achat
+ * sans compte) : renvoie le contenu du jeton vérifié.
+ */
+export function verifySessionToken(req) {
+  const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const parts = jwt.split('.');
+  if (parts.length !== 3) throw new HttpError(401, 'Session absente.');
+  const [head, body, sig] = parts;
+  const expected = crypto.createHmac('sha256', process.env.CLUB_CLIENT_SECRET || '').update(`${head}.${body}`).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new HttpError(401, 'Session invalide.');
+  const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000) - 10) throw new HttpError(401, 'Session expirée.');
+  if (payload.aud && payload.aud !== process.env.CLUB_CLIENT_ID) throw new HttpError(401, 'Session destinée à une autre application.');
+  return payload;
+}

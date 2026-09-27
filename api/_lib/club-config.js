@@ -6,8 +6,8 @@
  * changer une valeur ici la change partout (sauf les textes de la page du
  * thème, réglés dans l'éditeur).
  *
- * La carte à tampons (3 commandes = 1 pièce offerte) est un système à part,
- * tenu par le workflow Flow « Fidélité — tampons et pièce offerte ».
+ * La carte à tampons (3 commandes = 1 pièce offerte) est aussi tenue ici
+ * (avant le 27/09 : workflow Flow, désactivé depuis).
  */
 export const CLUB = {
   name: 'Avelyn Club',
@@ -44,6 +44,19 @@ export const CLUB = {
     { id: 'terrasse', name: 'La Terrasse', min: 3000 },
     { id: 'villa', name: 'La Villa', min: 8000 }
   ],
+
+  /**
+   * Carte à tampons : un tampon par commande EXPÉDIÉE en entier (jamais à la
+   * simple commande — pas de tampon à retirer après une annulation).
+   * Les commandes à 0 € (gifting, pièce offerte seule) ne comptent pas.
+   */
+  stamps: {
+    goal: 3,
+    /** Remise plafonnée sur la collection « Cadeaux fidélité » : une pièce offerte, jamais plus. */
+    giftCollectionId: 'gid://shopify/Collection/710939246934',
+    giftAmount: '75.00',
+    giftLabel: 'Pièce offerte — carte à tampons'
+  },
 
   /** Nombre de mouvements gardés dans l'historique affiché. */
   historySize: 30

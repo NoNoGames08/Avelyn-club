@@ -1,18 +1,20 @@
 import crypto from 'node:crypto';
 import { HttpError, fail, str } from './_lib/http.js';
 import { CLUB } from './_lib/club-config.js';
-import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, json } from './_lib/club.js';
+import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, createStampGift, json } from './_lib/club.js';
 
 /**
- * POST /api/order — webhook Shopify « orders/paid » de l'app
+ * POST /api/order — webhook Shopify « orders/fulfilled » de l'app
  * avelyn-fidelite (déclaré dans shopify.app.toml). Signature vérifiée avec
  * le secret de l'app (en-tête X-Shopify-Hmac-Sha256, corps brut).
  *
+ * Tout se valide quand la commande est EXPÉDIÉE en entier (pas à la commande) :
+ * - tampon (+ code « pièce offerte » au 3e, usage unique, réservé à la cliente)
  * - points d'achat : sous-total payé (après remises, hors livraison) × barème
  * - parrainage : attribut de panier _club_ref posé par le thème quand la
  *   visiteuse arrive par un lien ?ref= — crédité à la marraine si c'est la
  *   première commande de la filleule
- * La commande est relue chez Shopify (payée, non annulée) et chaque commande
+ * La commande est relue chez Shopify (payée, expédiée, non annulée) et chaque commande
  * n'est créditée qu'une fois : les renvois du webhook sont sans effet.
  */
 export const config = { api: { bodyParser: false } };
@@ -48,7 +50,7 @@ export default async function handler(req, res) {
 
     const { order } = await admin(
       `query($id: ID!) { order(id: $id) {
-        id name cancelledAt displayFinancialStatus
+        id name cancelledAt displayFinancialStatus displayFulfillmentStatus discountCodes
         currentSubtotalPriceSet { shopMoney { amount } }
         customAttributes { key value }
         customer { id }
@@ -57,16 +59,41 @@ export default async function handler(req, res) {
     );
     if (!order?.customer) return json(res, 200, { skipped: 'sans cliente' });
     if (order.cancelledAt) return json(res, 200, { skipped: 'annulée' });
-    if (!['PAID', 'PARTIALLY_REFUNDED', 'PARTIALLY_PAID'].includes(order.displayFinancialStatus)) return json(res, 200, { skipped: 'non payée' });
+    if (!['PAID', 'PARTIALLY_REFUNDED'].includes(order.displayFinancialStatus)) return json(res, 200, { skipped: 'non payée' });
+    if (order.displayFulfillmentStatus !== 'FULFILLED') return json(res, 200, { skipped: 'pas encore expédiée en entier' });
 
     const c = await loadCustomer(order.customer.id);
     if (c.history.some((h) => h.o === order.name)) return json(res, 200, { skipped: 'déjà créditée' });
 
     const { extra, tags } = ensureJoined(c);
-    const euros = Math.floor(Number(order.currentSubtotalPriceSet.shopMoney.amount) || 0);
+    const subtotal = Number(order.currentSubtotalPriceSet.shopMoney.amount) || 0;
+    const euros = Math.floor(subtotal);
     const earned = euros * CLUB.pointsPerEuro;
-    if (earned > 0) credit(c, earned, `Commande ${order.name}`, { o: order.name });
-    else c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: 0, l: `Commande ${order.name}`, o: order.name });
+
+    // Carte à tampons
+    const { goal } = CLUB.stamps;
+    let stampLabel = '';
+    let giftCode = null;
+    const usedGift = c.rewardCode && (order.discountCodes || []).some((d) => d.toUpperCase() === c.rewardCode.toUpperCase());
+    if (usedGift) c.rewardCode = '';
+    if (subtotal > 0) {
+      c.stamps += 1;
+      const onCard = ((c.stamps - 1) % goal) + 1;
+      stampLabel = ` · tampon ${onCard}/${goal}`;
+      if (onCard === goal) {
+        giftCode = `AV-GIFT-${order.name.replace(/\D/g, '')}`;
+        await createStampGift(c.id, giftCode);
+        c.rewardCode = giftCode;
+        stampLabel += ' — pièce offerte';
+      }
+    }
+    extra.push(
+      { ownerId: c.id, namespace: 'loyalty', key: 'stamps', type: 'number_integer', value: String(c.stamps) },
+      { ownerId: c.id, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' }
+    );
+
+    if (earned > 0) credit(c, earned, `Commande ${order.name}${stampLabel}`, { o: order.name, ...(giftCode ? { c: giftCode } : {}) });
+    else c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: 0, l: `Commande ${order.name}${stampLabel}`, o: order.name });
 
     // Parrainage — la filleule n'est créditée qu'une fois, sur sa première commande.
     const ref = (order.customAttributes || []).find((a) => a.key === '_club_ref')?.value?.trim().toUpperCase();
@@ -85,7 +112,7 @@ export default async function handler(req, res) {
 
     await saveCustomer(c, { extra });
     if (tags.length) await addTags(c.id, tags);
-    return json(res, 200, { credited: earned, referral });
+    return json(res, 200, { credited: earned, stamps: c.stamps, giftCode, referral });
   } catch (error) {
     return fail(res, error);
   }
