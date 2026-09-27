@@ -1,0 +1,8 @@
+{
+  "name": "avelyn-club",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Avelyn Club — serveur du programme de fidélité (points, paliers, échanges, parrainage).",
+  "engines": { "node": ">=20" }
+}
