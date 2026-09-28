@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { HttpError, fail, str } from './_lib/http.js';
 import { CLUB } from './_lib/club-config.js';
-import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, createStampGift, json } from './_lib/club.js';
+import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, createStampGift, revokeCodeIfUnused, json } from './_lib/club.js';
 
 /**
  * POST /api/order — webhook Shopify « orders/fulfilled » de l'app
@@ -16,6 +16,13 @@ import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, creat
  *   première commande de la filleule
  * La commande est relue chez Shopify (payée, expédiée, non annulée) et chaque commande
  * n'est créditée qu'une fois : les renvois du webhook sont sans effet.
+ *
+ * Même route pour « refunds/create » (en-tête X-Shopify-Topic) : un
+ * remboursement retire les points correspondants ; une commande remboursée
+ * en entier perd son tampon, et le code « pièce offerte » qu'elle avait
+ * déclenché est supprimé s'il n'a pas servi. S'il a déjà servi, la cliente
+ * « doit » une pièce : la prochaine carte complétée n'en redonne pas.
+ * Sans ça : trois commandes, la pièce offerte, puis trois retours remboursés.
  */
 export const config = { api: { bodyParser: false } };
 
@@ -45,8 +52,12 @@ export default async function handler(req, res) {
     verifyWebhook(req, raw);
     let payload;
     try { payload = JSON.parse(raw); } catch { throw new HttpError(400, 'Corps illisible.'); }
-    const orderId = str(payload.admin_graphql_api_id || (payload.id ? `gid://shopify/Order/${payload.id}` : ''), { max: 80 });
+    const topic = String(req.headers['x-shopify-topic'] || 'orders/fulfilled');
+    const orderId = topic === 'refunds/create'
+      ? (payload.order_id ? `gid://shopify/Order/${payload.order_id}` : '')
+      : str(payload.admin_graphql_api_id || (payload.id ? `gid://shopify/Order/${payload.id}` : ''), { max: 80 });
     if (!/^gid:\/\/shopify\/Order\/\d+$/.test(orderId)) throw new HttpError(400, 'orderId invalide.');
+    if (topic === 'refunds/create') return json(res, 200, await handleRefund(orderId));
 
     const { order } = await admin(
       `query($id: ID!) { order(id: $id) {
@@ -81,10 +92,16 @@ export default async function handler(req, res) {
       const onCard = ((c.stamps - 1) % goal) + 1;
       stampLabel = ` · tampon ${onCard}/${goal}`;
       if (onCard === goal) {
-        giftCode = `AV-GIFT-${order.name.replace(/\D/g, '')}`;
-        await createStampGift(c.id, giftCode);
-        c.rewardCode = giftCode;
-        stampLabel += ' — pièce offerte';
+        if ((c.actions.giftDebt || 0) > 0) {
+          // Pièce déjà reçue sur une carte dont une commande a été remboursée.
+          c.actions.giftDebt -= 1;
+          stampLabel += ' — pièce déjà offerte';
+        } else {
+          giftCode = `AV-GIFT-${order.name.replace(/\D/g, '')}`;
+          await createStampGift(c.id, giftCode);
+          c.rewardCode = giftCode;
+          stampLabel += ' — pièce offerte';
+        }
       }
     }
     extra.push(
@@ -92,8 +109,9 @@ export default async function handler(req, res) {
       { ownerId: c.id, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' }
     );
 
-    if (earned > 0) credit(c, earned, `Commande ${order.name}${stampLabel}`, { o: order.name, ...(giftCode ? { c: giftCode } : {}) });
-    else c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: 0, l: `Commande ${order.name}${stampLabel}`, o: order.name });
+    const mark = { o: order.name, ...(subtotal > 0 ? { s: 1 } : {}), ...(giftCode ? { c: giftCode } : {}) };
+    if (earned > 0) credit(c, earned, `Commande ${order.name}${stampLabel}`, mark);
+    else c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: 0, l: `Commande ${order.name}${stampLabel}`, ...mark });
 
     // Parrainage — la filleule n'est créditée qu'une fois, sur sa première commande.
     const ref = (order.customAttributes || []).find((a) => a.key === '_club_ref')?.value?.trim().toUpperCase();
@@ -116,4 +134,49 @@ export default async function handler(req, res) {
   } catch (error) {
     return fail(res, error);
   }
+}
+
+/** Remboursement (partiel ou total) d'une commande déjà créditée. */
+async function handleRefund(orderId) {
+  const { order } = await admin(
+    `query($id: ID!) { order(id: $id) { id name currentSubtotalPriceSet { shopMoney { amount } } customer { id } } }`,
+    { id: orderId }
+  );
+  if (!order?.customer) return { skipped: 'sans cliente' };
+  const c = await loadCustomer(order.customer.id);
+  const credited = c.history.find((h) => h.o === order.name);
+  // Pas encore expédiée : rien à reprendre, le crédit se fera sur le montant restant.
+  if (!credited) return { skipped: 'pas encore créditée' };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const subtotal = Number(order.currentSubtotalPriceSet.shopMoney.amount) || 0;
+  const target = Math.floor(Math.max(subtotal, 0)) * CLUB.pointsPerEuro;
+  const already = credited.p + c.history.filter((h) => h.ro === order.name).reduce((sum, h) => sum + h.p, 0);
+  const delta = target - already;
+  if (delta < 0) {
+    c.points += delta; // peut passer sous zéro si les points ont déjà été échangés : c'est voulu
+    c.total = Math.max(0, c.total + delta);
+    c.history.unshift({ d: today, p: delta, l: `Remboursement ${order.name}`, ro: order.name });
+  }
+
+  const extra = [];
+  c.actions.unstamped = c.actions.unstamped || [];
+  let revoked = null;
+  if (subtotal <= 0 && credited.s && !c.actions.unstamped.includes(order.name)) {
+    c.stamps = Math.max(0, c.stamps - 1);
+    c.actions.unstamped.push(order.name);
+    if (credited.c) {
+      revoked = await revokeCodeIfUnused(credited.c);
+      if (revoked === 'used') c.actions.giftDebt = (c.actions.giftDebt || 0) + 1;
+      else if (c.rewardCode === credited.c) c.rewardCode = '';
+    }
+    c.history.unshift({ d: today, p: 0, l: `Tampon retiré — ${order.name} remboursée`, ro: order.name });
+    extra.push(
+      { ownerId: c.id, namespace: 'loyalty', key: 'stamps', type: 'number_integer', value: String(c.stamps) },
+      { ownerId: c.id, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' }
+    );
+  }
+  if (delta >= 0 && !extra.length) return { skipped: 'rien à reprendre' };
+  await saveCustomer(c, { extra });
+  return { removedPoints: Math.min(delta, 0), stamps: c.stamps, revoked };
 }

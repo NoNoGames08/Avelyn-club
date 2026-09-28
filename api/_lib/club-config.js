@@ -59,7 +59,7 @@ export const CLUB = {
   },
 
   /** Nombre de mouvements gardés dans l'historique affiché. */
-  historySize: 30
+  historySize: 80
 };
 
 export function tierFor(total) {

@@ -295,8 +295,14 @@ export async function createDiscount(customerId, reward, code) {
   return userErrors(data.discountCodeBasicCreate, 'Création de la réduction');
 }
 
-/** Code « pièce offerte » de la carte à tampons : plafonné, une seule pièce, réservé à la cliente. */
+/**
+ * Code « pièce offerte » de la carte à tampons : plafonné, une seule pièce,
+ * réservé à la cliente. Idempotent : si le code existe déjà (webhook relancé
+ * par Shopify après un échec d'enregistrement), on ne le recrée pas.
+ */
 export async function createStampGift(customerId, code) {
+  const existing = await admin(`query($code: String!) { codeDiscountNodeByCode(code: $code) { id } }`, { code });
+  if (existing.codeDiscountNodeByCode?.id) return existing.codeDiscountNodeByCode;
   const { giftCollectionId, giftAmount, giftLabel } = CLUB.stamps;
   const data = await admin(
     `mutation($d: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $d) { codeDiscountNode { id } userErrors { field message } } }`,
@@ -312,6 +318,22 @@ export async function createStampGift(customerId, code) {
     } }
   );
   return userErrors(data.discountCodeBasicCreate, 'Code pièce offerte');
+}
+
+/**
+ * Retire un code de réduction s'il n'a pas servi. Renvoie « used » s'il a
+ * déjà été utilisé (on ne peut plus le reprendre), « deleted » sinon.
+ */
+export async function revokeCodeIfUnused(code) {
+  const found = await admin(
+    `query($code: String!) { codeDiscountNodeByCode(code: $code) { id codeDiscount { ... on DiscountCodeBasic { asyncUsageCount } ... on DiscountCodeFreeShipping { asyncUsageCount } } } }`,
+    { code }
+  );
+  const node = found.codeDiscountNodeByCode;
+  if (!node) return 'absent';
+  if ((node.codeDiscount?.asyncUsageCount || 0) > 0) return 'used';
+  userErrors((await admin(`mutation($id: ID!) { discountCodeDelete(id: $id) { deletedCodeDiscountId userErrors { field message } } }`, { id: node.id })).discountCodeDelete, 'Retrait du code');
+  return 'deleted';
 }
 
 /**
