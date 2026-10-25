@@ -125,7 +125,7 @@ function customerFromProxy(req) {
   const a = Buffer.from(params.get('signature') || '');
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new HttpError(401, 'Signature invalide.');
-  if (params.get('shop') !== process.env.CLUB_SHOP_DOMAIN) throw new HttpError(401, 'Boutique inconnue.');
+  if (params.get('shop') !== shopDomain()) throw new HttpError(401, 'Boutique inconnue.');
   if (Math.abs(Date.now() / 1000 - Number(params.get('timestamp'))) > 600) throw new HttpError(401, 'Requête expirée.');
   // Une page tierce ne peut pas poster du JSON vers la boutique sans
   // l'accord du navigateur : seule la page du club passe.
