@@ -155,6 +155,7 @@ const CUSTOMER_QUERY = `
       ref: metafield(namespace: "loyalty", key: "ref") { value }
       stamps: metafield(namespace: "loyalty", key: "stamps") { value }
       rewardCode: metafield(namespace: "loyalty", key: "reward_code") { value }
+      tickets: metafield(namespace: "loyalty", key: "tickets") { value }
     }
   }
 `;
@@ -182,7 +183,8 @@ export async function loadCustomer(id) {
     birthday: c.birthday?.value || '',
     ref: c.ref?.value || '',
     stamps: parseInt(c.stamps?.value ?? '0', 10) || 0,
-    rewardCode: c.rewardCode?.value && c.rewardCode.value !== '-' ? c.rewardCode.value : ''
+    rewardCode: c.rewardCode?.value && c.rewardCode.value !== '-' ? c.rewardCode.value : '',
+    tickets: parseInt(c.tickets?.value ?? '0', 10) || 0
   };
 }
 
@@ -282,7 +284,9 @@ export function publicState(c) {
     history: c.history.slice(0, 15),
     codes: c.history.filter((h) => h.c).slice(0, 10).map((h) => ({ code: h.c, label: h.l.replace(/^Échange : /, ''), date: h.d })),
     stamps: c.stamps,
-    stampCode: c.rewardCode
+    stampCode: c.rewardCode,
+    stampMin: CLUB.stamps.minSubtotal,
+    tickets: c.tickets
   };
 }
 

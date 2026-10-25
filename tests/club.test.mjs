@@ -10,7 +10,7 @@ process.env.CLUB_CLIENT_ID = 'cid';
 process.env.CLUB_CLIENT_SECRET = 'secret';
 
 // ---------- faux Shopify ----------
-const I = 'gid://shopify/Customer/2', L = 'gid://shopify/Customer/1', K = 'gid://shopify/Customer/3';
+const I = 'gid://shopify/Customer/2', L = 'gid://shopify/Customer/1', K = 'gid://shopify/Customer/3', M = 'gid://shopify/Customer/4';
 const baseOrder = (name, customer, amount = '72.50', extra = {}) => ({
   name, customer, cancelledAt: null, displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'FULFILLED',
   discountCodes: [], customAttributes: [], currentSubtotalPriceSet: { shopMoney: { amount } }, ...extra
@@ -19,7 +19,8 @@ const db = {
   customers: {
     [L]: { firstName: 'Léa', numberOfOrders: 1, tags: [], sub: 'NOT_SUBSCRIBED', mf: {} },
     [I]: { firstName: 'Inès', numberOfOrders: 3, tags: [], sub: 'NOT_SUBSCRIBED', mf: {} },
-    [K]: { firstName: 'Kim', numberOfOrders: 3, tags: [], sub: 'NOT_SUBSCRIBED', mf: { stamps: { value: '2', digest: 'k1' } } }
+    [K]: { firstName: 'Kim', numberOfOrders: 3, tags: [], sub: 'NOT_SUBSCRIBED', mf: { stamps: { value: '2', digest: 'k1' } } },
+    [M]: { firstName: 'Mia', numberOfOrders: 1, tags: [], sub: 'NOT_SUBSCRIBED', mf: {} }
   },
   orders: {
     'gid://shopify/Order/10': baseOrder('#1010', I),
@@ -37,7 +38,7 @@ globalThis.fetch = async (url, opts) => {
     const c = db.customers[v.id];
     return resp({ customer: { id: v.id, firstName: c.firstName, numberOfOrders: c.numberOfOrders, tags: c.tags, emailMarketingConsent: { marketingState: c.sub },
       points: mf(c, 'points'), pointsTotal: mf(c, 'points_total'), actions: mf(c, 'actions'), history: mf(c, 'history'), birthday: mf(c, 'birthday'),
-      ref: mf(c, 'ref'), stamps: mf(c, 'stamps'), rewardCode: mf(c, 'reward_code') } });
+      ref: mf(c, 'ref'), stamps: mf(c, 'stamps'), rewardCode: mf(c, 'reward_code'), tickets: mf(c, 'tickets') } });
   }
   if (q.includes('metafieldsSet')) {
     if (db.failNextSave) { db.failNextSave = false; return resp({ metafieldsSet: { metafields: [], userErrors: [{ field: ['x'], message: 'stale', code: 'STALE_OBJECT' }] } }); }
@@ -122,7 +123,7 @@ ok(db.discounts.at(-1).context.customers.add[0] === I && db.discounts.at(-1).usa
 ok(r.body.total === 1320, 'le cumul ne baisse pas après échange');
 db.orders['gid://shopify/Order/11'].customAttributes = [{ key: '_club_ref', value: 'av000002' }];
 r = await order('gid://shopify/Order/11'); ok(r.body.credited === 550 && r.body.referral === I, 'filleule : +550, parrainage détecté');
-r = await call('me', { sub: I }); ok(r.body.points === 1320, 'marraine : +1000');
+r = await call('me', { sub: I }); ok(r.body.points === 2320, 'marraine : +2000');
 db.orders['gid://shopify/Order/12'] = baseOrder('#1012', I, '72.50', { displayFinancialStatus: 'PENDING', displayFulfillmentStatus: 'UNFULFILLED' });
 r = await order('gid://shopify/Order/12'); ok(r.body.skipped === 'non payée', 'commande non payée ignorée');
 db.orders['gid://shopify/Order/13'] = baseOrder('#1013', I, '200');
@@ -151,11 +152,11 @@ db.orders['gid://shopify/Order/20'] = baseOrder('#1020', K);
 db.failNextSave = true;
 r = await order('gid://shopify/Order/20'); ok(r.code === 409, 'conflit d\'enregistrement → relance');
 r = await order('gid://shopify/Order/20'); ok(r.body.giftCode === 'AV-GIFT-1020' && db.discounts.filter((d) => d.code === 'AV-GIFT-1020').length === 1, 'relance : code créé une seule fois');
-Object.assign(db.orders['gid://shopify/Order/20'], { currentSubtotalPriceSet: { shopMoney: { amount: '30.00' } }, displayFinancialStatus: 'PARTIALLY_REFUNDED' });
-r = await refund('gid://shopify/Order/20'); ok(r.body.removedPoints === -420 && r.body.stamps === 3, 'remboursement partiel : -420, tampon gardé');
+Object.assign(db.orders['gid://shopify/Order/20'], { currentSubtotalPriceSet: { shopMoney: { amount: '45.00' } }, displayFinancialStatus: 'PARTIALLY_REFUNDED' });
+r = await refund('gid://shopify/Order/20'); ok(r.body.removedPoints === -270 && r.body.stamps === 3, 'remboursement partiel à 45 € : -270, tampon gardé');
 r = await refund('gid://shopify/Order/20'); ok(r.body.skipped === 'rien à reprendre', 'remboursement renvoyé : sans effet');
-db.orders['gid://shopify/Order/20'].currentSubtotalPriceSet = { shopMoney: { amount: '0.00' } };
-r = await refund('gid://shopify/Order/20'); ok(r.body.stamps === 2 && r.body.revoked === 'deleted' && db.customers[K].mf.reward_code.value === '-', 'remboursement total : tampon et code retirés');
+db.orders['gid://shopify/Order/20'].currentSubtotalPriceSet = { shopMoney: { amount: '30.00' } };
+r = await refund('gid://shopify/Order/20'); ok(r.body.stamps === 2 && r.body.revoked === 'deleted' && db.customers[K].mf.reward_code.value === '-', 'remboursement sous 40 € : tampon et code retirés');
 db.orders['gid://shopify/Order/21'] = baseOrder('#1021', K);
 r = await order('gid://shopify/Order/21'); ok(r.body.giftCode === 'AV-GIFT-1021', 'nouveau 3e tampon : nouveau code');
 db.used.add('AV-GIFT-1021');
@@ -168,11 +169,11 @@ r = await order('gid://shopify/Order/22'); ok(r.body.giftCode === null && JSON.p
 db.customers[I].mf.points = { value: '60000', digest: db.customers[I].mf.points.digest };
 const nd2 = db.discounts.length;
 r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'brode' } });
-ok(r.code === 200 && r.body.request && r.body.points === 58400 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -1 600, balise club-demande, aucun code');
+ok(r.code === 200 && r.body.request && r.body.points === 52000 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -8 000, balise club-demande, aucun code');
 ok(r.body.history[0].l === 'Demande : Une casquette brodée à votre prénom', 'demande tracée dans l\'historique');
-db.customers[I].mf.points = { value: '23999', digest: db.customers[I].mf.points.digest };
-r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'vespa' } }); ok(r.code === 400, 'Vespa refusée à 23 999 points');
-r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'vespa').points === 24000 && !r.body.rewards.some((x) => x.id === 'yacht' || x.id === 'diner'), 'barème : Vespa à 24 000 (2 400 € dépensés), yacht et dîner retirés');
+db.customers[I].mf.points = { value: '49999', digest: db.customers[I].mf.points.digest };
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'prenom' } }); ok(r.code === 400, 'prénom refusé à 49 999 points');
+r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'prenom').points === 50000 && !r.body.rewards.some((x) => ['yacht', 'diner', 'vespa', 'monaco'].includes(x.id)), 'barème : prénom à 50 000 ; Vespa, Monaco, yacht et dîner retirés');
 
 // page du thème, via le proxy d'application Shopify
 const proxyUrl = (customer, { shop = 'test.myshopify.com', ts = Math.floor(Date.now() / 1000), forge } = {}) => {
@@ -189,6 +190,26 @@ r = await call('me', { url: proxyUrl('2', { ts: 1000 }) }); ok(r.code === 401, '
 r = await call('action', { method: 'POST', url: proxyUrl('1'), body: { type: 'tiktok' } }); ok(r.code === 200 && r.body.actions.find((a) => a.id === 'tiktok').done, 'proxy : action TikTok créditée depuis la page');
 r = await call('redeem', { method: 'POST', url: proxyUrl('1'), body: { reward: 'shipping' } });
 ok(r.code === 200 || r.code === 400, 'proxy : échange accepté par la route');
+
+// minimum de 40 € pour un tampon
+db.orders['gid://shopify/Order/30'] = baseOrder('#1030', L, '35.00');
+r = await order('gid://shopify/Order/30'); ok(r.body.credited === 350 && db.customers[L].mf.stamps.value === '1', 'commande de 35 € : +350 points, pas de tampon');
+r = await call('thankyou', { token: jwt(), url: '/api/thankyou?order=gid://shopify/Order/30' }); ok(r.body.counts === false && r.body.points === 350, 'remerciement : 35 € n\'annonce pas de tampon');
+
+// parrainage : pas sous 40 €, repris si la commande est remboursée
+let before = JSON.parse(JSON.stringify(db.customers[I].mf.points)).value;
+db.orders['gid://shopify/Order/31'] = baseOrder('#1031', M, '50.00', { customAttributes: [{ key: '_club_ref', value: 'AV000002' }] });
+r = await order('gid://shopify/Order/31'); ok(r.body.referral === I && Number(db.customers[I].mf.points.value) === Number(before) + 2000, 'parrainage : +2000 à la marraine');
+db.orders['gid://shopify/Order/31'].currentSubtotalPriceSet = { shopMoney: { amount: '0.00' } };
+r = await refund('gid://shopify/Order/31'); ok(r.body.referralReversed && Number(db.customers[I].mf.points.value) === Number(before), 'filleule remboursée : parrainage repris');
+r = await refund('gid://shopify/Order/31'); ok(!r.body.referralReversed, 'reprise une seule fois');
+
+// tirage du Grand Prix
+db.customers[I].mf.points = { value: '2500', digest: db.customers[I].mf.points.digest };
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'grandprix' } });
+ok(r.body.ticket && r.body.tickets === 1 && r.body.points === 1500 && db.customers[I].tags.includes('club-tirage'), 'ticket : -1000, balise club-tirage');
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'grandprix' } }); ok(r.body.tickets === 2 && db.customers[I].mf.tickets.value === '2', 'plusieurs tickets possibles');
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'grandprix' } }); ok(r.code === 400, 'pas de ticket sans 1000 points');
 
 // anniversaire
 const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));

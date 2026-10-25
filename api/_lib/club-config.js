@@ -28,8 +28,13 @@ export const CLUB = {
   /** Crédités chaque année le jour de l'anniversaire (tâche planifiée). */
   birthdayGift: 500,
 
-  /** Crédités à la marraine quand la filleule passe sa première commande. */
-  referralPoints: 1000,
+  /**
+   * Crédités à la marraine quand la première commande de la filleule
+   * (au moins `stamps.minSubtotal` €) est expédiée ; repris si cette commande
+   * est remboursée sous ce seuil. Coût réel ≈ 8 € s'ils sont échangés, pour
+   * une nouvelle cliente qui coûterait ≈ 30 € en pub.
+   */
+  referralPoints: 2000,
 
   rewards: [
     { id: 'shipping', points: 1000, label: 'Livraison offerte', kind: 'shipping' },
@@ -37,17 +42,19 @@ export const CLUB = {
     { id: 'eur10', points: 3000, label: '10 € offerts', kind: 'amount', amount: '10.00' },
     { id: 'eur25', points: 6000, label: '25 € offerts', kind: 'amount', amount: '25.00' },
 
-    // « Pour les plus mordues » — de vraies pièces et de vrais moments.
-    // Une demande retire les points et tague la cliente « club-demande »
-    // dans l'admin ; Noé la contacte (pas de code).
-    // Prix fixés par Noé en euros À DÉPENSER (`spend`, repère interne,
-    // jamais affiché) : points = spend × pointsPerEuro.
-    { id: 'brode', points: 1600, spend: 160, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
-    { id: 'carre', points: 2300, spend: 230, label: 'Un carré dessiné rien que pour vous', kind: 'experience' },
-    { id: 'annee', points: 4000, spend: 400, label: 'Un an de nouveautés offertes', kind: 'experience' },
-    { id: 'monaco', points: 7000, spend: 700, label: 'Un week-end à Monaco', kind: 'experience' },
-    { id: 'prenom', points: 12000, spend: 1200, label: 'Votre prénom sur une pièce de la prochaine collection', kind: 'experience' },
-    { id: 'vespa', points: 24000, spend: 2400, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' }
+    // « Pour les plus mordues » — de vraies pièces, sur demande : les points
+    // sont retirés, la cliente taguée « club-demande », Noé la contacte.
+    // Règle anti-rouge : coût réel × 250 points au minimum (≤ 4 % de ce que
+    // la cliente a dépensé pour les gagner, à 10 pts/€). `cost` = estimation
+    // interne, jamais affichée.
+    { id: 'brode', points: 8000, cost: 17, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
+    { id: 'annee', points: 25000, cost: 90, label: 'Un an de nouveautés offertes', kind: 'experience' },
+    { id: 'carre', points: 40000, cost: 150, label: 'Un carré dessiné rien que pour vous', kind: 'experience' },
+    { id: 'prenom', points: 50000, cost: 100, label: 'Votre prénom sur une pièce de la prochaine collection', kind: 'experience' },
+
+    // Le tirage : un ticket par échange, autant de tickets qu'on veut. Un
+    // seul lot par an (coût plafonné quel que soit le nombre de tickets).
+    { id: 'grandprix', points: 1000, label: 'Le Grand Prix de Monaco, un week-end hors du temps', kind: 'ticket' }
   ],
 
   /** Paliers sur les points gagnés depuis l'inscription (jamais diminués par un échange). */
@@ -64,6 +71,8 @@ export const CLUB = {
    */
   stamps: {
     goal: 3,
+    /** Sous-total minimum (€, après remises) pour qu'une commande pose un tampon. */
+    minSubtotal: 40,
     /** Remise plafonnée sur la collection « Cadeaux fidélité » : une pièce offerte, jamais plus. */
     giftCollectionId: 'gid://shopify/Collection/710939246934',
     giftAmount: '75.00',

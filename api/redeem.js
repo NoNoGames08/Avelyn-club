@@ -11,6 +11,9 @@ import { preflight, customerFromToken, loadCustomer, saveCustomer, credit, newCo
  * Récompenses « experience » (démesurées) : pas de code — les points sont
  * retirés, la demande est tracée dans l'historique et la cliente taguée
  * « club-demande » pour que Noé la contacte.
+ *
+ * Tirage (kind « ticket ») : chaque échange ajoute un ticket (métachamp
+ * loyalty.tickets, balise « club-tirage »), sans limite.
  */
 export default async function handler(req, res) {
   if (preflight(req, res)) return;
@@ -22,6 +25,14 @@ export default async function handler(req, res) {
 
     const c = await loadCustomer(id);
     if (c.points < reward.points) throw new HttpError(400, 'Pas encore assez de points.');
+
+    if (reward.kind === 'ticket') {
+      c.tickets += 1;
+      credit(c, -reward.points, `Ticket : ${reward.label}`, { t: 1 });
+      await saveCustomer(c, { extra: [{ ownerId: c.id, namespace: 'loyalty', key: 'tickets', type: 'number_integer', value: String(c.tickets) }] });
+      await addTags(c.id, ['club-tirage']);
+      return json(res, 200, { ...publicState(c), ticket: true, reward });
+    }
 
     if (reward.kind === 'experience') {
       credit(c, -reward.points, `Demande : ${reward.label}`, { x: 1 });

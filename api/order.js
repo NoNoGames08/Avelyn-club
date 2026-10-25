@@ -11,9 +11,11 @@ import { admin, loadCustomer, saveCustomer, ensureJoined, credit, addTags, creat
  * Tout se valide quand la commande est EXPÉDIÉE en entier (pas à la commande) :
  * - tampon (+ code « pièce offerte » au 3e, usage unique, réservé à la cliente)
  * - points d'achat : sous-total payé (après remises, hors livraison) × barème
+ * - tampon et parrainage seulement à partir de CLUB.stamps.minSubtotal € —
+ *   trois petites commandes ne valent pas une pièce à 75 €
  * - parrainage : attribut de panier _club_ref posé par le thème quand la
  *   visiteuse arrive par un lien ?ref= — crédité à la marraine si c'est la
- *   première commande de la filleule
+ *   première commande de la filleule ; repris si elle est remboursée
  * La commande est relue chez Shopify (payée, expédiée, non annulée) et chaque commande
  * n'est créditée qu'une fois : les renvois du webhook sont sans effet.
  *
@@ -87,7 +89,8 @@ export default async function handler(req, res) {
     let giftCode = null;
     const usedGift = c.rewardCode && (order.discountCodes || []).some((d) => d.toUpperCase() === c.rewardCode.toUpperCase());
     if (usedGift) c.rewardCode = '';
-    if (subtotal > 0) {
+    const stamped = subtotal >= CLUB.stamps.minSubtotal;
+    if (stamped) {
       c.stamps += 1;
       const onCard = ((c.stamps - 1) % goal) + 1;
       stampLabel = ` · tampon ${onCard}/${goal}`;
@@ -109,18 +112,19 @@ export default async function handler(req, res) {
       { ownerId: c.id, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' }
     );
 
-    const mark = { o: order.name, ...(subtotal > 0 ? { s: 1 } : {}), ...(giftCode ? { c: giftCode } : {}) };
+    const mark = { o: order.name, ...(stamped ? { s: 1 } : {}), ...(giftCode ? { c: giftCode } : {}) };
     if (earned > 0) credit(c, earned, `Commande ${order.name}${stampLabel}`, mark);
     else c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: 0, l: `Commande ${order.name}${stampLabel}`, ...mark });
 
     // Parrainage — la filleule n'est créditée qu'une fois, sur sa première commande.
     const ref = (order.customAttributes || []).find((a) => a.key === '_club_ref')?.value?.trim().toUpperCase();
     let referral = null;
-    if (ref && ref !== c.ref && c.numberOfOrders <= 1 && !c.actions.referred_by) {
+    if (ref && ref !== c.ref && c.numberOfOrders <= 1 && !c.actions.referred_by && subtotal >= CLUB.stamps.minSubtotal) {
       const found = await admin(`query($q: String!) { customers(first: 1, query: $q) { nodes { id } } }`, { q: `tag:clubref${ref}` });
       const sponsorId = found.customers.nodes[0]?.id;
       if (sponsorId && sponsorId !== c.id) {
         c.actions.referred_by = ref;
+        c.actions.referred_order = order.name;
         const sponsor = await loadCustomer(sponsorId);
         credit(sponsor, CLUB.referralPoints, `Parrainage — première commande de ${c.firstName || 'votre filleule'}`);
         await saveCustomer(sponsor);
@@ -162,7 +166,7 @@ async function handleRefund(orderId) {
   const extra = [];
   c.actions.unstamped = c.actions.unstamped || [];
   let revoked = null;
-  if (subtotal <= 0 && credited.s && !c.actions.unstamped.includes(order.name)) {
+  if (subtotal < CLUB.stamps.minSubtotal && credited.s && !c.actions.unstamped.includes(order.name)) {
     c.stamps = Math.max(0, c.stamps - 1);
     c.actions.unstamped.push(order.name);
     if (credited.c) {
@@ -176,7 +180,22 @@ async function handleRefund(orderId) {
       { ownerId: c.id, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' }
     );
   }
-  if (delta >= 0 && !extra.length) return { skipped: 'rien à reprendre' };
+  // Parrainage repris si la commande qui l'a déclenché passe sous le minimum.
+  let referralReversed = false;
+  if (subtotal < CLUB.stamps.minSubtotal && c.actions.referred_order === order.name && !c.actions.referral_reversed) {
+    const found = await admin(`query($q: String!) { customers(first: 1, query: $q) { nodes { id } } }`, { q: `tag:clubref${c.actions.referred_by}` });
+    const sponsorId = found.customers.nodes[0]?.id;
+    if (sponsorId) {
+      const sponsor = await loadCustomer(sponsorId);
+      sponsor.points -= CLUB.referralPoints;
+      sponsor.total = Math.max(0, sponsor.total - CLUB.referralPoints);
+      sponsor.history.unshift({ d: today, p: -CLUB.referralPoints, l: `Parrainage repris — commande de ${c.firstName || 'votre filleule'} remboursée` });
+      await saveCustomer(sponsor);
+    }
+    c.actions.referral_reversed = true;
+    referralReversed = true;
+  }
+  if (delta >= 0 && !extra.length && !referralReversed) return { skipped: 'rien à reprendre' };
   await saveCustomer(c, { extra });
-  return { removedPoints: Math.min(delta, 0), stamps: c.stamps, revoked };
+  return { removedPoints: Math.min(delta, 0), stamps: c.stamps, revoked, referralReversed };
 }

@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     );
     if (!order) throw new HttpError(404, 'Commande introuvable.');
     const { goal } = CLUB.stamps;
-    const counts = Number(order.currentSubtotalPriceSet.shopMoney.amount) > 0;
+    const counts = Number(order.currentSubtotalPriceSet.shopMoney.amount) >= CLUB.stamps.minSubtotal;
     const credited = parseInt(order.customer?.stamps?.value ?? '0', 10) || 0;
     let history = [];
     try { history = JSON.parse(order.customer?.history?.value || '[]'); } catch {}
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     const PAID = ['PAID', 'PARTIALLY_REFUNDED', 'AUTHORIZED', 'PARTIALLY_PAID'];
     const pending = nodes.slice(from).filter((o) =>
       o.name !== order.name && !o.cancelledAt && !done.has(o.name) &&
-      PAID.includes(o.displayFinancialStatus) && Number(o.currentSubtotalPriceSet.shopMoney.amount) > 0
+      PAID.includes(o.displayFinancialStatus) && Number(o.currentSubtotalPriceSet.shopMoney.amount) >= CLUB.stamps.minSubtotal
     ).length;
     const position = credited + pending + (counts ? 1 : 0);
     const slot = counts ? ((position - 1) % goal) + 1 : 0;
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
       slot,
       completes: counts && slot === goal,
       pointsPerEuro: CLUB.pointsPerEuro,
-      points: counts ? Math.floor(Number(order.currentSubtotalPriceSet.shopMoney.amount)) * CLUB.pointsPerEuro : 0
+      points: Number(order.currentSubtotalPriceSet.shopMoney.amount) > 0 ? Math.floor(Number(order.currentSubtotalPriceSet.shopMoney.amount)) * CLUB.pointsPerEuro : 0
     });
   } catch (error) {
     return fail(res, error);
