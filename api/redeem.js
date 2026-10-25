@@ -1,19 +1,17 @@
 import { HttpError, fail, readBody, str } from './_lib/http.js';
 import { CLUB } from './_lib/club-config.js';
-import { preflight, customerFromToken, loadCustomer, saveCustomer, credit, newCode, createDiscount, addTags, publicState, json } from './_lib/club.js';
+import { preflight, customerFromToken, loadCustomer, saveCustomer, credit, newCode, createDiscount, safeTags, admin, withRetry, publicState, json } from './_lib/club.js';
 
 /**
- * POST /api/redeem { reward } — échange des points contre un code
- * personnel à usage unique. Les points sont retirés AVANT la création du
- * code (compareDigest empêche un double échange) et rendus si Shopify
- * refuse de créer la réduction.
+ * POST /api/redeem { reward } — échange des points.
  *
- * Récompenses « experience » (démesurées) : pas de code — les points sont
- * retirés, la demande est tracée dans l'historique et la cliente taguée
- * « club-demande » pour que Noé la contacte.
- *
- * Tirage (kind « ticket ») : chaque échange ajoute un ticket (métachamp
- * loyalty.tickets, balise « club-tirage »), sans limite.
+ * - code (livraison, montants) : les points sont retirés AVANT la création du
+ *   code (compareDigest empêche un double échange). Si Shopify refuse le code
+ *   ET qu'il n'existe pas, les points sont rendus (avec relance sur conflit).
+ * - experience (grandes récompenses) : pas de code — points retirés, demande
+ *   gardée dans actions.requests, tags « club-demande » et
+ *   « club-demande-<id> » pour que Noé la contacte (réparés s'ils manquent).
+ * - ticket (tirage) : un ticket de plus (loyalty.tickets), tag « club-tirage ».
  */
 export default async function handler(req, res) {
   if (preflight(req, res)) return;
@@ -22,36 +20,52 @@ export default async function handler(req, res) {
     const id = customerFromToken(req);
     const reward = CLUB.rewards.find((r) => r.id === str(readBody(req).reward, { max: 20 }));
     if (!reward) throw new HttpError(400, 'Récompense inconnue.');
+    const today = new Date().toISOString().slice(0, 10);
 
-    const c = await loadCustomer(id);
-    if (c.points < reward.points) throw new HttpError(400, 'Pas encore assez de points.');
-
-    if (reward.kind === 'ticket') {
-      c.tickets += 1;
-      credit(c, -reward.points, `Ticket : ${reward.label}`, { t: 1 });
-      await saveCustomer(c, { extra: [{ ownerId: c.id, namespace: 'loyalty', key: 'tickets', type: 'number_integer', value: String(c.tickets) }] });
-      await addTags(c.id, ['club-tirage']);
-      return json(res, 200, { ...publicState(c), ticket: true, reward });
-    }
-
-    if (reward.kind === 'experience') {
-      credit(c, -reward.points, `Demande : ${reward.label}`, { x: 1 });
-      await saveCustomer(c);
-      await addTags(c.id, ['club-demande']);
-      return json(res, 200, { ...publicState(c), request: true, reward });
+    if (reward.kind === 'ticket' || reward.kind === 'experience') {
+      const c = await withRetry(async () => {
+        const fresh = await loadCustomer(id);
+        if (fresh.points < reward.points) throw new HttpError(400, 'Pas encore assez de points.');
+        if (reward.kind === 'ticket') {
+          fresh.tickets += 1;
+          credit(fresh, -reward.points, `Ticket : ${reward.label}`);
+        } else {
+          fresh.actions.requests = fresh.actions.requests || [];
+          fresh.actions.requests.push({ id: reward.id, d: today });
+          credit(fresh, -reward.points, `Demande : ${reward.label}`);
+        }
+        await saveCustomer(fresh);
+        return fresh;
+      });
+      await safeTags(c.id, reward.kind === 'ticket' ? ['club-tirage'] : ['club-demande', `club-demande-${reward.id}`]);
+      return json(res, 200, reward.kind === 'ticket'
+        ? { ...publicState(c), ticket: true, reward }
+        : { ...publicState(c), request: true, reward });
     }
 
     const code = newCode();
-    credit(c, -reward.points, `Échange : ${reward.label}`, { c: code });
-    await saveCustomer(c);
+    const c = await withRetry(async () => {
+      const fresh = await loadCustomer(id);
+      if (fresh.points < reward.points) throw new HttpError(400, 'Pas encore assez de points.');
+      credit(fresh, -reward.points, `Échange : ${reward.label}`);
+      fresh.actions.codes = [{ code, label: reward.label, date: today }, ...(fresh.actions.codes || [])].slice(0, 30);
+      await saveCustomer(fresh);
+      return fresh;
+    });
 
     try {
       await createDiscount(c.id, reward, code);
     } catch (error) {
-      const fresh = await loadCustomer(id);
-      credit(fresh, reward.points, `Remboursé : ${reward.label}`);
-      fresh.total -= reward.points; // un remboursement ne fait pas monter de palier
-      await saveCustomer(fresh);
+      // Délai dépassé alors que Shopify a bien créé le code : on le garde.
+      const exists = await admin(`query($code: String!) { codeDiscountNodeByCode(code: $code) { id } }`, { code }).catch(() => null);
+      if (exists?.codeDiscountNodeByCode?.id) return json(res, 200, { ...publicState(c), code, reward });
+      await withRetry(async () => {
+        const fresh = await loadCustomer(id);
+        fresh.points += reward.points; // un remboursement ne fait pas monter de palier
+        fresh.history.unshift({ d: today, p: reward.points, l: `Rendu : ${reward.label} (code non créé)` });
+        fresh.actions.codes = (fresh.actions.codes || []).filter((x) => x.code !== code);
+        await saveCustomer(fresh);
+      });
       throw error;
     }
 

@@ -4,6 +4,10 @@
     {
       "path": "/api/birthdays",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/reconcile",
+      "schedule": "30 3 * * *"
     }
   ],
   "rewrites": [

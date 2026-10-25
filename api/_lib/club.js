@@ -12,12 +12,18 @@ import { CLUB, tierFor } from './club-config.js';
  *
  * Données : métachamps client (espace de noms « loyalty »)
  *   points        entier  solde échangeable
- *   points_total  entier  cumul gagné (fixe le palier, jamais diminué)
+ *   points_total  entier  cumul gagné (fixe le palier ; un échange ne le baisse jamais, un remboursement si)
  *   tier          texte   identifiant du palier
  *   actions       json    { join: date, newsletter: date, … }
- *   history       json    [{ d, p, l, o?, c? }] — plus récent d'abord
+ *   history       json    [{ d, p, l, o? }] — plus récent d'abord, AFFICHAGE seulement
+ *   orders        json    registre des commandes { "#1042": { p, s, d, r?, rv? } } — ce
+ *                         qui a été crédité pour chacune (points, tampon, marraine) ;
+ *                         source de vérité des tampons et de l'idempotence
+ *   stamps        entier  tampons (recalculé depuis le registre)
+ *   reward_code   texte   code « pièce offerte » en cours, « - » sinon
+ *   tickets       entier  tickets du tirage
  *   birthday      date    AAAA-MM-JJ
- *   ref           texte   code de parrainage
+ *   ref           texte   code de parrainage (AV + 6 caractères, unique)
  * Tags : club-<palier> (segments Klaviyo, accès anticipé), clubref<code>
  * (retrouver la marraine), bday<MMJJ> (tâche d'anniversaire).
  */
@@ -156,6 +162,7 @@ const CUSTOMER_QUERY = `
       stamps: metafield(namespace: "loyalty", key: "stamps") { value }
       rewardCode: metafield(namespace: "loyalty", key: "reward_code") { value }
       tickets: metafield(namespace: "loyalty", key: "tickets") { value }
+      ledger: metafield(namespace: "loyalty", key: "orders") { value compareDigest }
     }
   }
 `;
@@ -169,7 +176,7 @@ export async function loadCustomer(id) {
   const data = await admin(CUSTOMER_QUERY, { id });
   const c = data.customer;
   if (!c) throw new HttpError(404, 'Cliente introuvable.');
-  return {
+  const customer = {
     id: c.id,
     firstName: c.firstName || '',
     numberOfOrders: Number(c.numberOfOrders) || 0,
@@ -184,8 +191,53 @@ export async function loadCustomer(id) {
     ref: c.ref?.value || '',
     stamps: parseInt(c.stamps?.value ?? '0', 10) || 0,
     rewardCode: c.rewardCode?.value && c.rewardCode.value !== '-' ? c.rewardCode.value : '',
-    tickets: parseInt(c.tickets?.value ?? '0', 10) || 0
+    tickets: parseInt(c.tickets?.value ?? '0', 10) || 0,
+    ledger: parseJson(c.ledger?.value, {}),
+    ledgerDigest: c.ledger?.compareDigest ?? null,
+    hasLedger: Boolean(c.ledger)
   };
+  migrate(customer);
+  return customer;
+}
+
+/** Anciennes données (avant le registre) : reconstruites une fois depuis l'historique. */
+export function migrate(c) {
+  if (c.actions.v >= 2) return;
+  c.migrated = true;
+  if (!c.hasLedger) {
+    const unstamped = c.actions.unstamped || [];
+    const ledger = {};
+    for (const h of [...c.history].reverse()) {
+      if (h.o && !h.ro && /^Commande/.test(h.l || '')) {
+        ledger[h.o] = { p: h.p || 0, s: h.s && !unstamped.includes(h.o) ? 1 : 0, d: h.d, ...(h.c ? { c: h.c } : {}) };
+      }
+    }
+    for (const h of c.history) if (h.ro && ledger[h.ro] && h.p) ledger[h.ro].p += h.p;
+    c.ledger = ledger;
+  }
+  const counted = Object.values(c.ledger).reduce((n, e) => n + (e.s ? 1 : 0), 0);
+  c.actions.legacyStamps = Math.max(0, c.stamps - counted);
+  const due = Math.floor(c.stamps / CLUB.stamps.goal) + (c.actions.giftDebt || 0);
+  const gifts = Object.values(c.ledger).filter((e) => e.c && e.s).map((e) => ({ code: e.c, ...(e.c === c.rewardCode ? {} : { used: 'avant' }) }));
+  if (c.rewardCode && !gifts.some((g) => g.code === c.rewardCode)) gifts.push({ code: c.rewardCode });
+  while (gifts.length < due) gifts.unshift({ code: '', used: 'avant' });
+  c.actions.gifts = gifts;
+  c.actions.codes = c.actions.codes || c.history.filter((h) => h.c && /^CLUB-/.test(h.c)).map((h) => ({ code: h.c, label: (h.l || '').replace(/^Échange : /, ''), date: h.d }));
+  delete c.actions.giftDebt;
+  delete c.actions.unstamped;
+  c.actions.v = 2;
+}
+
+/** Relance une opération sur conflit d'enregistrement (409), depuis une lecture fraîche. */
+export async function withRetry(fn, tries = 4) {
+  for (let i = 1; ; i += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 409 || i >= tries) throw error;
+      await new Promise((r) => setTimeout(r, 150 * i));
+    }
+  }
 }
 
 const METAFIELDS_SET = `
@@ -207,6 +259,10 @@ export async function saveCustomer(c, { extra = [] } = {}) {
   const owner = c.id;
   const metafields = [
     { ownerId: owner, namespace: 'loyalty', key: 'points', type: 'number_integer', value: String(c.points), compareDigest: c.digest },
+    { ownerId: owner, namespace: 'loyalty', key: 'orders', type: 'json', value: JSON.stringify(c.ledger || {}), compareDigest: c.ledgerDigest },
+    { ownerId: owner, namespace: 'loyalty', key: 'stamps', type: 'number_integer', value: String(c.stamps) },
+    { ownerId: owner, namespace: 'loyalty', key: 'reward_code', type: 'single_line_text_field', value: c.rewardCode || '-' },
+    { ownerId: owner, namespace: 'loyalty', key: 'tickets', type: 'number_integer', value: String(c.tickets || 0) },
     { ownerId: owner, namespace: 'loyalty', key: 'points_total', type: 'number_integer', value: String(c.total) },
     { ownerId: owner, namespace: 'loyalty', key: 'tier', type: 'single_line_text_field', value: current.id },
     { ownerId: owner, namespace: 'loyalty', key: 'actions', type: 'json', value: JSON.stringify(c.actions) },
@@ -219,7 +275,9 @@ export async function saveCustomer(c, { extra = [] } = {}) {
     throw new HttpError(409, 'Le solde vient de changer, réessayer.');
   }
   userErrors(data.metafieldsSet, 'Enregistrement du club');
-  await syncTierTags(c, current.id);
+  // Les tags de palier suivent : leur échec ne doit jamais annuler ce qui vient
+  // d'être enregistré (ils sont réparés au prochain passage).
+  try { await syncTierTags(c, current.id); } catch (error) { console.error('tags palier', c.id, error.message); }
 }
 
 async function syncTierTags(c, tierId) {
@@ -237,6 +295,14 @@ export async function addTags(id, tags) {
   userErrors((await admin(`mutation($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }`, { id, tags })).tagsAdd, 'Tags');
 }
 
+/** Tags posés après un enregistrement réussi : jamais bloquants, réparés par ensureJoined. */
+export async function safeTags(id, tags) {
+  if (!tags.length) return;
+  for (let i = 0; i < 3; i += 1) {
+    try { await addTags(id, tags); return; } catch (error) { console.error('tags', id, tags, error.message); }
+  }
+}
+
 /** Crédite (ou débite) et trace le mouvement. Ne sauvegarde pas. */
 export function credit(c, points, label, extra = {}) {
   c.points += points;
@@ -244,15 +310,42 @@ export function credit(c, points, label, extra = {}) {
   c.history.unshift({ d: new Date().toISOString().slice(0, 10), p: points, l: label, ...extra });
 }
 
-/** Rejoindre le club : +points une fois, et un code de parrainage. */
-export function ensureJoined(c) {
+const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const REF_PATTERN = /^AV[A-Z0-9]{6}$/;
+
+/** Code de parrainage aléatoire, vérifié unique (tag clubref<code>). */
+async function uniqueRef() {
+  for (let i = 0; i < 6; i += 1) {
+    let code = 'AV';
+    for (const byte of crypto.randomBytes(6)) code += REF_ALPHABET[byte % REF_ALPHABET.length];
+    const found = await admin(`query($q: String!) { customers(first: 1, query: $q) { nodes { id } } }`, { q: `tag:"clubref${code}"` });
+    if (!found.customers.nodes.length) return code;
+  }
+  throw new HttpError(503, 'Code de parrainage indisponible, réessayer.');
+}
+
+export function birthdayTag(date) {
+  return date ? `bday${date.slice(5, 7)}${date.slice(8, 10)}` : '';
+}
+
+/**
+ * Rejoindre le club : +points une fois, et un code de parrainage. Répare
+ * aussi les tags manquants (un tagsAdd raté ne doit jamais rendre un code de
+ * parrainage introuvable, ni faire sauter un anniversaire ou une demande).
+ * Ne sauvegarde pas : renvoie les métachamps et tags à poser après.
+ */
+export async function ensureJoined(c) {
   const extra = [];
   const tags = [];
   if (!c.ref) {
-    c.ref = 'AV' + c.id.split('/').pop().slice(-6).padStart(6, '0');
+    c.ref = await uniqueRef();
     extra.push({ ownerId: c.id, namespace: 'loyalty', key: 'ref', type: 'single_line_text_field', value: c.ref });
-    tags.push(`clubref${c.ref}`);
   }
+  const wanted = [`clubref${c.ref}`];
+  if (c.birthday) wanted.push(birthdayTag(c.birthday));
+  if ((c.tickets || 0) > 0) wanted.push('club-tirage');
+  for (const r of c.actions.requests || []) wanted.push('club-demande', `club-demande-${r.id}`);
+  for (const t of wanted) if (!c.tags.includes(t) && !tags.includes(t)) tags.push(t);
   let joined = false;
   if (!c.actions.join) {
     c.actions.join = new Date().toISOString().slice(0, 10);
@@ -282,7 +375,7 @@ export function publicState(c) {
     referral: { code: c.ref, url: c.ref ? `${CLUB.storeUrl}/?ref=${c.ref}` : '', points: CLUB.referralPoints },
     pointsPerEuro: CLUB.pointsPerEuro,
     history: c.history.slice(0, 15),
-    codes: c.history.filter((h) => h.c).slice(0, 10).map((h) => ({ code: h.c, label: h.l.replace(/^Échange : /, ''), date: h.d })),
+    codes: (c.actions.codes || []).slice(0, 10),
     stamps: c.stamps,
     stampCode: c.rewardCode,
     stampMin: CLUB.stamps.minSubtotal,

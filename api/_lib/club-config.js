@@ -57,7 +57,7 @@ export const CLUB = {
     { id: 'grandprix', points: 1000, label: 'Le Grand Prix de Monaco, un week-end hors du temps', kind: 'ticket' }
   ],
 
-  /** Paliers sur les points gagnés depuis l'inscription (jamais diminués par un échange). */
+  /** Paliers sur les points gagnés depuis l’inscription (un échange ne fait jamais redescendre ; un remboursement reprend les points de la commande). */
   tiers: [
     { id: 'plage', name: 'La Plage', min: 0 },
     { id: 'terrasse', name: 'La Terrasse', min: 3000 },
