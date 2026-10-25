@@ -20,3 +20,6 @@ Barème : `api/_lib/club-config.js` (fait foi — garder la page du thème align
 
 Domaine : `club.avelynmonaco.com` (CNAME `club` → `cname.vercel-dns.com` chez IONOS).
 Doc complète : `~/Documents/Avelyn Monaco/fidelite/README.md`.
+
+## Tests
+`node tests/club.test.mjs` — faux Shopify, aucun appel réel (42 scénarios : inscription, actions, échanges, commandes expédiées, tampons et pièce offerte, parrainage, remboursements et dette de pièce, récompenses démesurées, anniversaire, double clic). Le dossier `tests/` n'est pas déployé (`.vercelignore`).

@@ -35,7 +35,19 @@ export const CLUB = {
     { id: 'shipping', points: 1000, label: 'Livraison offerte', kind: 'shipping' },
     { id: 'eur5', points: 1500, label: '5 € offerts', kind: 'amount', amount: '5.00' },
     { id: 'eur10', points: 3000, label: '10 € offerts', kind: 'amount', amount: '10.00' },
-    { id: 'eur25', points: 6000, label: '25 € offerts', kind: 'amount', amount: '25.00' }
+    { id: 'eur25', points: 6000, label: '25 € offerts', kind: 'amount', amount: '25.00' },
+
+    // « Pour les plus mordues » — récompenses volontairement démesurées.
+    // Ce sont de VRAIES promesses : une demande retire les points et tague la
+    // cliente « club-demande » dans l'admin ; Noé la contacte (pas de code).
+    { id: 'brode', points: 50000, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
+    { id: 'annee', points: 100000, label: 'Un an de nouveautés, livrées avant tout le monde', kind: 'experience' },
+    { id: 'diner', points: 250000, label: 'Un dîner pour deux face à la mer', kind: 'experience' },
+    { id: 'monaco', points: 500000, label: 'Un week-end à Monaco, tout compris', kind: 'experience' },
+    { id: 'carre', points: 1000000, label: 'Un carré dessiné rien que pour vous, pièce unique', kind: 'experience' },
+    { id: 'vespa', points: 2000000, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' },
+    { id: 'prenom', points: 5000000, label: 'Votre prénom sur une pièce de la collection', kind: 'experience' },
+    { id: 'yacht', points: 10000000, label: 'Le yacht. Une journée. Vous et vos amies.', kind: 'experience' }
   ],
 
   /** Paliers sur les points gagnés depuis l'inscription (jamais diminués par un échange). */
