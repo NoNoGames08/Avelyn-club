@@ -168,10 +168,11 @@ r = await order('gid://shopify/Order/22'); ok(r.body.giftCode === null && JSON.p
 db.customers[I].mf.points = { value: '60000', digest: db.customers[I].mf.points.digest };
 const nd2 = db.discounts.length;
 r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'brode' } });
-ok(r.code === 200 && r.body.request && r.body.points === 20000 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -40 000, balise club-demande, aucun code');
+ok(r.code === 200 && r.body.request && r.body.points === 58400 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -1 600, balise club-demande, aucun code');
 ok(r.body.history[0].l === 'Demande : Une casquette brodée à votre prénom', 'demande tracée dans l\'historique');
-r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'vespa' } }); ok(r.code === 400, 'Vespa refusée sans les 375 000 points');
-r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'vespa').points === 375000 && !r.body.rewards.some((x) => x.id === 'yacht' || x.id === 'diner'), 'barème : Vespa à 375 000, yacht et dîner retirés');
+db.customers[I].mf.points = { value: '23999', digest: db.customers[I].mf.points.digest };
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'vespa' } }); ok(r.code === 400, 'Vespa refusée à 23 999 points');
+r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'vespa').points === 24000 && !r.body.rewards.some((x) => x.id === 'yacht' || x.id === 'diner'), 'barème : Vespa à 24 000 (2 400 € dépensés), yacht et dîner retirés');
 
 // page du thème, via le proxy d'application Shopify
 const proxyUrl = (customer, { shop = 'test.myshopify.com', ts = Math.floor(Date.now() / 1000), forge } = {}) => {

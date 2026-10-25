@@ -40,14 +40,14 @@ export const CLUB = {
     // « Pour les plus mordues » — de vraies pièces et de vrais moments.
     // Une demande retire les points et tague la cliente « club-demande »
     // dans l'admin ; Noé la contacte (pas de code).
-    // Prix en points = valeur × 250 (1 € de récompense pour 25 € dépensés,
-    // le même taux que les 25 € offerts).
-    { id: 'brode', points: 40000, value: 160, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
-    { id: 'carre', points: 57500, value: 230, label: 'Un carré dessiné rien que pour vous', kind: 'experience' },
-    { id: 'annee', points: 100000, value: 400, label: 'Un an de nouveautés offertes', kind: 'experience' },
-    { id: 'monaco', points: 175000, value: 700, label: 'Un week-end à Monaco', kind: 'experience' },
-    { id: 'prenom', points: 300000, value: 1200, label: 'Votre prénom sur une pièce de la prochaine collection', kind: 'experience' },
-    { id: 'vespa', points: 375000, value: 1500, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' }
+    // Prix fixés par Noé en euros À DÉPENSER (`spend`, repère interne,
+    // jamais affiché) : points = spend × pointsPerEuro.
+    { id: 'brode', points: 1600, spend: 160, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
+    { id: 'carre', points: 2300, spend: 230, label: 'Un carré dessiné rien que pour vous', kind: 'experience' },
+    { id: 'annee', points: 4000, spend: 400, label: 'Un an de nouveautés offertes', kind: 'experience' },
+    { id: 'monaco', points: 7000, spend: 700, label: 'Un week-end à Monaco', kind: 'experience' },
+    { id: 'prenom', points: 12000, spend: 1200, label: 'Votre prénom sur une pièce de la prochaine collection', kind: 'experience' },
+    { id: 'vespa', points: 24000, spend: 2400, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' }
   ],
 
   /** Paliers sur les points gagnés depuis l'inscription (jamais diminués par un échange). */
