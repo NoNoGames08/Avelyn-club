@@ -95,7 +95,7 @@ async function call(route, { method = 'GET', sub, body, url, token, topic, badsi
     await h(req, res); return res;
   }
   const auth = token || (sub ? jwt(sub) : null);
-  await h({ method, url: url || '/', headers: auth ? { authorization: 'Bearer ' + auth } : {}, body }, res);
+  await h({ method, url: url || '/', headers: auth ? { authorization: 'Bearer ' + auth } : (method === 'POST' ? { 'content-type': 'application/json' } : {}), body }, res);
   return res;
 }
 const order = (id) => call('order', { method: 'POST', body: { orderId: id } });
@@ -168,10 +168,26 @@ r = await order('gid://shopify/Order/22'); ok(r.body.giftCode === null && JSON.p
 db.customers[I].mf.points = { value: '60000', digest: db.customers[I].mf.points.digest };
 const nd2 = db.discounts.length;
 r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'brode' } });
-ok(r.code === 200 && r.body.request && r.body.points === 10000 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -50 000, balise club-demande, aucun code');
+ok(r.code === 200 && r.body.request && r.body.points === 20000 && db.discounts.length === nd2 && db.customers[I].tags.includes('club-demande'), 'récompense démesurée : -40 000, balise club-demande, aucun code');
 ok(r.body.history[0].l === 'Demande : Une casquette brodée à votre prénom', 'demande tracée dans l\'historique');
-r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'yacht' } }); ok(r.code === 400, 'yacht refusé sans les 10 000 000 points');
-r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'yacht').points === 10000000, 'le yacht est au barème');
+r = await call('redeem', { method: 'POST', sub: I, body: { reward: 'vespa' } }); ok(r.code === 400, 'Vespa refusée sans les 375 000 points');
+r = await call('me', { sub: I }); ok(r.body.rewards.find((x) => x.id === 'vespa').points === 375000 && !r.body.rewards.some((x) => x.id === 'yacht' || x.id === 'diner'), 'barème : Vespa à 375 000, yacht et dîner retirés');
+
+// page du thème, via le proxy d'application Shopify
+const proxyUrl = (customer, { shop = 'test.myshopify.com', ts = Math.floor(Date.now() / 1000), forge } = {}) => {
+  const p = { shop, path_prefix: '/apps/club', timestamp: String(ts), logged_in_customer_id: customer };
+  const msg = Object.keys(p).sort().map((k) => `${k}=${p[k]}`).join('');
+  const sig = forge ? '0'.repeat(64) : crypto.createHmac('sha256', 'secret').update(msg).digest('hex');
+  return '/proxy/me?' + new URLSearchParams({ ...p, signature: sig });
+};
+r = await call('me', { url: proxyUrl('2') }); ok(r.code === 200 && r.body.firstName === 'Inès', 'proxy : cliente reconnue par la signature Shopify');
+r = await call('me', { url: proxyUrl('2', { forge: true }) }); ok(r.code === 401, 'proxy : signature forgée refusée');
+r = await call('me', { url: proxyUrl('') }); ok(r.code === 401, 'proxy : visiteuse non connectée refusée');
+r = await call('me', { url: proxyUrl('2', { shop: 'autre.myshopify.com' }) }); ok(r.code === 401, 'proxy : autre boutique refusée');
+r = await call('me', { url: proxyUrl('2', { ts: 1000 }) }); ok(r.code === 401, 'proxy : requête périmée refusée');
+r = await call('action', { method: 'POST', url: proxyUrl('1'), body: { type: 'tiktok' } }); ok(r.code === 200 && r.body.actions.find((a) => a.id === 'tiktok').done, 'proxy : action TikTok créditée depuis la page');
+r = await call('redeem', { method: 'POST', url: proxyUrl('1'), body: { reward: 'shipping' } });
+ok(r.code === 200 || r.code === 400, 'proxy : échange accepté par la route');
 
 // anniversaire
 const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));

@@ -1,6 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/birthdays", "schedule": "0 6 * * *" }
+    {
+      "path": "/api/birthdays",
+      "schedule": "0 6 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/proxy/:route(me|action|redeem)",
+      "destination": "/api/:route"
+    }
   ]
 }

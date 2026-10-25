@@ -37,17 +37,17 @@ export const CLUB = {
     { id: 'eur10', points: 3000, label: '10 € offerts', kind: 'amount', amount: '10.00' },
     { id: 'eur25', points: 6000, label: '25 € offerts', kind: 'amount', amount: '25.00' },
 
-    // « Pour les plus mordues » — récompenses volontairement démesurées.
-    // Ce sont de VRAIES promesses : une demande retire les points et tague la
-    // cliente « club-demande » dans l'admin ; Noé la contacte (pas de code).
-    { id: 'brode', points: 50000, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
-    { id: 'annee', points: 100000, label: 'Un an de nouveautés, livrées avant tout le monde', kind: 'experience' },
-    { id: 'diner', points: 250000, label: 'Un dîner pour deux face à la mer', kind: 'experience' },
-    { id: 'monaco', points: 500000, label: 'Un week-end à Monaco, tout compris', kind: 'experience' },
-    { id: 'carre', points: 1000000, label: 'Un carré dessiné rien que pour vous, pièce unique', kind: 'experience' },
-    { id: 'vespa', points: 2000000, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' },
-    { id: 'prenom', points: 5000000, label: 'Votre prénom sur une pièce de la collection', kind: 'experience' },
-    { id: 'yacht', points: 10000000, label: 'Le yacht. Une journée. Vous et vos amies.', kind: 'experience' }
+    // « Pour les plus mordues » — de vraies pièces et de vrais moments.
+    // Une demande retire les points et tague la cliente « club-demande »
+    // dans l'admin ; Noé la contacte (pas de code).
+    // Prix en points = valeur × 250 (1 € de récompense pour 25 € dépensés,
+    // le même taux que les 25 € offerts).
+    { id: 'brode', points: 40000, value: 160, label: 'Une casquette brodée à votre prénom', kind: 'experience' },
+    { id: 'carre', points: 57500, value: 230, label: 'Un carré dessiné rien que pour vous', kind: 'experience' },
+    { id: 'annee', points: 100000, value: 400, label: 'Un an de nouveautés offertes', kind: 'experience' },
+    { id: 'monaco', points: 175000, value: 700, label: 'Un week-end à Monaco', kind: 'experience' },
+    { id: 'prenom', points: 300000, value: 1200, label: 'Votre prénom sur une pièce de la prochaine collection', kind: 'experience' },
+    { id: 'vespa', points: 375000, value: 1500, label: 'Une Vespa crème, nœud sur le guidon', kind: 'experience' }
   ],
 
   /** Paliers sur les points gagnés depuis l'inscription (jamais diminués par un échange). */

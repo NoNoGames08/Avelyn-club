@@ -94,6 +94,7 @@ export function preflight(req, res) {
  * l'application). `sub` porte l'identifiant de la cliente connectée.
  */
 export function customerFromToken(req) {
+  if (!req.headers.authorization && /[?&]signature=/.test(req.url || '')) return customerFromProxy(req);
   const header = req.headers.authorization || '';
   const jwt = header.replace(/^Bearer\s+/i, '');
   const parts = jwt.split('.');
@@ -109,6 +110,29 @@ export function customerFromToken(req) {
   if (payload.aud && payload.aud !== process.env.CLUB_CLIENT_ID) throw new HttpError(401, 'Session destinée à une autre application.');
   if (!payload.sub || !String(payload.sub).startsWith('gid://shopify/Customer/')) throw new HttpError(401, 'Cliente non connectée.');
   return payload.sub;
+}
+
+/**
+ * Page Avelyn Club du thème : elle appelle /apps/club/<route>, que Shopify
+ * relaie ici (proxy d'application, vercel.json → /proxy/*) en signant la
+ * requête et en y ajoutant la cliente connectée (logged_in_customer_id).
+ */
+function customerFromProxy(req) {
+  const params = new URL(req.url, 'https://proxy.local').searchParams;
+  const keys = [...new Set(params.keys())].filter((k) => k !== 'signature').sort();
+  const message = keys.map((k) => `${k}=${params.getAll(k).join(',')}`).join('');
+  const expected = crypto.createHmac('sha256', process.env.CLUB_CLIENT_SECRET || '').update(message).digest('hex');
+  const a = Buffer.from(params.get('signature') || '');
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new HttpError(401, 'Signature invalide.');
+  if (params.get('shop') !== process.env.CLUB_SHOP_DOMAIN) throw new HttpError(401, 'Boutique inconnue.');
+  if (Math.abs(Date.now() / 1000 - Number(params.get('timestamp'))) > 600) throw new HttpError(401, 'Requête expirée.');
+  // Une page tierce ne peut pas poster du JSON vers la boutique sans
+  // l'accord du navigateur : seule la page du club passe.
+  if (req.method === 'POST' && !String(req.headers['content-type'] || '').includes('application/json')) throw new HttpError(415, 'Format refusé.');
+  const id = params.get('logged_in_customer_id');
+  if (!/^\d+$/.test(id || '')) throw new HttpError(401, 'Cliente non connectée.');
+  return `gid://shopify/Customer/${id}`;
 }
 
 export { json };
