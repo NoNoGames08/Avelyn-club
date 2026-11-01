@@ -13,6 +13,11 @@ import { orderBase } from './_lib/sync.js';
  * créditées + celle-ci. `completes` seulement si cette commande fait vraiment
  * naître une nouvelle pièce (pas si une pièce a déjà été donnée pour cette carte).
  *
+ * Points (inscription au club sur la page de remerciement) : `points` = ceux
+ * de cette commande (10/€, même sous 40 €), `welcome` = bienvenue si la fiche
+ * n'a pas encore rejoint le club. `balanceAfter` (solde une fois les commandes
+ * payées créditées) seulement pour une cliente connectée.
+ *
  * Confidentialité : une cliente connectée ne peut interroger que ses propres
  * commandes ; sans compte, seulement une commande passée il y a moins de 6 h.
  */
@@ -39,6 +44,7 @@ export default async function handler(req, res) {
           customer {
             id
             stamps: metafield(namespace: "loyalty", key: "stamps") { value }
+            points: metafield(namespace: "loyalty", key: "points") { value }
             ledger: metafield(namespace: "loyalty", key: "orders") { value }
             actions: metafield(namespace: "loyalty", key: "actions") { value }
             orders(first: 15, sortKey: CREATED_AT, reverse: true) { nodes { ${ORDER_FIELDS} } }
@@ -64,12 +70,25 @@ export default async function handler(req, res) {
     const position = credited + pending + (counts ? 1 : 0);
     const slot = counts ? ((position - 1) % goal) + 1 : 0;
 
+    const paid = (o) => !o.cancelledAt && PAID.includes(o.displayFinancialStatus);
+    const pointsOf = (o) => (paid(o) ? Math.floor(orderBase(o)) * CLUB.pointsPerEuro : 0);
+    const points = order.customer ? pointsOf(order) : 0;
+    const joined = Boolean(parse(order.customer?.actions?.value, {}).join);
+    const welcome = order.customer && !joined ? CLUB.actions.join.points : 0;
+    const pendingPoints = nodes.slice(from)
+      .filter((o) => o.name !== order.name && !ledger[o.name])
+      .reduce((sum, o) => sum + pointsOf(o), 0);
+    const balance = parseInt(order.customer?.points?.value ?? '0', 10) || 0;
+
     return json(res, 200, {
       counts,
       goal,
       slot,
       completes: counts && slot === goal && Math.floor(position / goal) > gifts,
-      minSubtotal
+      minSubtotal,
+      points,
+      welcome,
+      balanceAfter: session.sub ? balance + pendingPoints + (ledger[order.name] ? 0 : points) + welcome : null
     });
   } catch (error) {
     return fail(res, error);

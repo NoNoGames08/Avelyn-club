@@ -76,7 +76,7 @@ globalThis.fetch = async (url, opts) => {
     if (!o) return resp({ order: null });
     const c = db.customers[o.customer];
     const nodes = ordersOf(o.customer).reverse().map(([, x]) => x);
-    return resp({ order: { id: v.id, ...o, customer: o.customer ? { id: o.customer, stamps: mf(c, 'stamps'), ledger: mf(c, 'orders'), actions: mf(c, 'actions'), orders: { nodes } } : null } });
+    return resp({ order: { id: v.id, ...o, customer: o.customer ? { id: o.customer, stamps: mf(c, 'stamps'), points: mf(c, 'points'), ledger: mf(c, 'orders'), actions: mf(c, 'actions'), orders: { nodes } } : null } });
   }
   if (q.includes('orders(first')) {
     return resp({ orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: Object.entries(db.orders).map(([id, o]) => ({ id, name: o.name })) } });
@@ -277,6 +277,14 @@ r = await call('thankyou', { token: jwt(L), url: `/api/thankyou?order=${t2}` });
 const t3 = mkOrder(102, L, '60.00', { displayFinancialStatus: 'PENDING', displayFulfillmentStatus: 'UNFULFILLED' });
 r = await call('thankyou', { token: jwt(L), url: `/api/thankyou?order=${t3}` }); ok(r.body.counts === false, 'paiement en attente : aucun tampon annoncé');
 r = await call('thankyou', { url: `/api/thankyou?order=${t1}` }); ok(r.code === 401, 'sans jeton : 401');
+r = await call('thankyou', { token: jwt(L), url: `/api/thankyou?order=${t1}` });
+ok(r.body.points === 600 && r.body.welcome === 0 && r.body.balanceAfter === pts(L) + 600, 'connectée : 600 points annoncés, solde après expédition');
+r = await call('thankyou', { token: jwt(L), url: `/api/thankyou?order=${t2}` }); ok(r.body.points === 300 && r.body.counts === false, '30 € : pas de tampon mais 300 points');
+r = await call('thankyou', { token: jwt(L), url: `/api/thankyou?order=${t3}` }); ok(r.body.points === 0, 'paiement en attente : aucun point annoncé');
+const G = C(30); cust(G, 'Gaëlle');
+const g1 = mkOrder(103, G, '55.00', { createdAt: new Date().toISOString(), displayFulfillmentStatus: 'UNFULFILLED' });
+r = await call('thankyou', { token: jwt(), url: `/api/thankyou?order=${g1}` });
+ok(r.body.counts && r.body.slot === 1 && r.body.points === 550 && r.body.welcome === 200 && r.body.balanceAfter === null, 'sans compte : tampon, 550 points + 200 de bienvenue, solde jamais dévoilé');
 
 // ---------- anciennes données ----------
 section('migration des anciennes données');
